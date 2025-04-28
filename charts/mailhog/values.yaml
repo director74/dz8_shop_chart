@@ -1,0 +1,9 @@
+enabled: true
+image:
+  repository: mailhog/mailhog
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 1025
+  uiPort: 8025 

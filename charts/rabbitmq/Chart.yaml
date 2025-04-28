@@ -1,0 +1,7 @@
+apiVersion: v2
+name: rabbitmq
+description: Helm chart для RabbitMQ
+type: application
+version: 0.1.0
+appVersion: "3.12.10"
+ 

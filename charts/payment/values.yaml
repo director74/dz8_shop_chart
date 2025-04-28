@@ -1,0 +1,13 @@
+enabled: true
+replicaCount: 1
+image:
+  repository: payment-service
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8081
+database:
+  name: payments
+rabbitmq:
+  vhost: / 

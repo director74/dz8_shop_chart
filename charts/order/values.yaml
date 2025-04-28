@@ -1,0 +1,16 @@
+enabled: true
+replicaCount: 1
+image:
+  repository: order-service
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8080
+database:
+  name: orders
+rabbitmq:
+  vhost: /
+env:
+  BILLING_SERVICE_URL: http://billing-service:8081
+  NOTIFICATION_SERVICE_URL: http://notification-service:8082

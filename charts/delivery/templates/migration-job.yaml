@@ -1,0 +1,184 @@
+{{ if .Values.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: delivery-migration-{{ randAlphaNum 5 | lower }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: delivery-migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-delivery-db
+          image: postgres:17.2-alpine
+          command: ['sh', '-c', 'until pg_isready -h {{ .Values.database.host }} -p {{ $.Values.global.postgresql.service.port }} -U {{ $.Values.global.postgresql.auth.username }} -t 5; do echo "Waiting for delivery-db postgres..."; sleep 2; done;']
+          env:
+            - name: PGPASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+      containers:
+        - name: delivery-migration
+          image: postgres:17.2-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -d $POSTGRES_DB -v ON_ERROR_STOP=1 <<EOF
+              -- Schema from 000001
+              CREATE TABLE IF NOT EXISTS delivery_zones (
+                  id SERIAL PRIMARY KEY,
+                  name VARCHAR(255) NOT NULL,
+                  code VARCHAR(50) NOT NULL UNIQUE,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP
+              );
+              CREATE TABLE IF NOT EXISTS delivery_slots (
+                  id SERIAL PRIMARY KEY,
+                  start_time TIMESTAMP NOT NULL,
+                  end_time TIMESTAMP NOT NULL,
+                  zone_id INTEGER NOT NULL DEFAULT 1,
+                  capacity INTEGER NOT NULL DEFAULT 10,
+                  available INTEGER NOT NULL DEFAULT 10,
+                  max_deliveries INTEGER NOT NULL DEFAULT 10,
+                  current_load INTEGER NOT NULL DEFAULT 0,
+                  is_disabled BOOLEAN NOT NULL DEFAULT false,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP,
+                  CONSTRAINT fk_delivery_slot_zone FOREIGN KEY (zone_id) REFERENCES delivery_zones(id) ON DELETE CASCADE
+              );
+              CREATE TABLE IF NOT EXISTS couriers (
+                  id SERIAL PRIMARY KEY,
+                  name VARCHAR(255) NOT NULL,
+                  phone VARCHAR(255) NOT NULL,
+                  email VARCHAR(255) NOT NULL,
+                  status VARCHAR(20) NOT NULL DEFAULT 'available',
+                  current_zone_id INTEGER,
+                  vehicle_type VARCHAR(50),
+                  vehicle_number VARCHAR(50),
+                  capacity INTEGER,
+                  rating DECIMAL(3,2),
+                  is_active BOOLEAN NOT NULL DEFAULT true,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP,
+                  CONSTRAINT fk_courier_zone FOREIGN KEY (current_zone_id) REFERENCES delivery_zones(id) ON DELETE SET NULL
+              );
+              CREATE TABLE IF NOT EXISTS courier_schedules (
+                  id SERIAL PRIMARY KEY,
+                  courier_id INTEGER NOT NULL,
+                  slot_id INTEGER NOT NULL,
+                  order_id INTEGER,
+                  delivery_id INTEGER,
+                  start_time TIMESTAMP NOT NULL,
+                  end_time TIMESTAMP NOT NULL,
+                  is_available BOOLEAN NOT NULL DEFAULT true,
+                  is_reserved BOOLEAN NOT NULL DEFAULT false,
+                  is_completed BOOLEAN NOT NULL DEFAULT false,
+                  notes TEXT,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP,
+                  CONSTRAINT fk_schedule_courier FOREIGN KEY (courier_id) REFERENCES couriers(id) ON DELETE CASCADE,
+                  CONSTRAINT fk_schedule_slot FOREIGN KEY (slot_id) REFERENCES delivery_slots(id) ON DELETE CASCADE
+              );
+              CREATE TABLE IF NOT EXISTS delivery (
+                  id SERIAL PRIMARY KEY,
+                  order_id INTEGER NOT NULL,
+                  user_id INTEGER NOT NULL,
+                  courier_id INTEGER,
+                  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                  scheduled_start_time TIMESTAMP,
+                  scheduled_end_time TIMESTAMP,
+                  actual_start_time TIMESTAMP,
+                  actual_end_time TIMESTAMP,
+                  delivery_address TEXT NOT NULL,
+                  recipient_name VARCHAR(255) NOT NULL,
+                  recipient_phone VARCHAR(255) NOT NULL,
+                  notes TEXT,
+                  tracking_code VARCHAR(100),
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP,
+                  CONSTRAINT fk_delivery_courier FOREIGN KEY (courier_id) REFERENCES couriers(id) ON DELETE SET NULL
+              );
+              CREATE INDEX IF NOT EXISTS idx_delivery_slots_time ON delivery_slots(start_time, end_time);
+              CREATE INDEX IF NOT EXISTS idx_couriers_active ON couriers(is_active);
+              CREATE INDEX IF NOT EXISTS idx_courier_schedules_courier ON courier_schedules(courier_id);
+              CREATE INDEX IF NOT EXISTS idx_courier_schedules_slot ON courier_schedules(slot_id);
+              CREATE INDEX IF NOT EXISTS idx_courier_schedules_available ON courier_schedules(is_available);
+              CREATE INDEX IF NOT EXISTS idx_delivery_order_id ON delivery(order_id);
+              CREATE INDEX IF NOT EXISTS idx_delivery_user_id ON delivery(user_id);
+              CREATE INDEX IF NOT EXISTS idx_delivery_courier_id ON delivery(courier_id);
+              CREATE INDEX IF NOT EXISTS idx_delivery_status ON delivery(status);
+
+              -- Data from 000002
+              INSERT INTO delivery_zones (name, code)
+              VALUES ('Зона 1', 'ZONE_1')
+              ON CONFLICT DO NOTHING;
+
+              INSERT INTO delivery_slots (start_time, end_time, zone_id, capacity, available, max_deliveries, current_load, is_disabled)
+              VALUES
+                  (CURRENT_DATE + '09:00:00'::time, CURRENT_DATE + '12:00:00'::time, 1, 5, 5, 5, 0, false),
+                  (CURRENT_DATE + '13:00:00'::time, CURRENT_DATE + '16:00:00'::time, 1, 5, 5, 5, 0, false),
+                  (CURRENT_DATE + '17:00:00'::time, CURRENT_DATE + '20:00:00'::time, 1, 5, 5, 5, 0, false),
+                  (CURRENT_DATE + INTERVAL '1 day' + '09:00:00'::time, CURRENT_DATE + INTERVAL '1 day' + '12:00:00'::time, 1, 5, 5, 5, 0, false),
+                  (CURRENT_DATE + INTERVAL '1 day' + '13:00:00'::time, CURRENT_DATE + INTERVAL '1 day' + '16:00:00'::time, 1, 5, 5, 5, 0, false),
+                  (CURRENT_DATE + INTERVAL '1 day' + '17:00:00'::time, CURRENT_DATE + INTERVAL '1 day' + '20:00:00'::time, 1, 5, 5, 5, 0, false),
+                  (CURRENT_DATE + INTERVAL '2 days' + '09:00:00'::time, CURRENT_DATE + INTERVAL '2 days' + '12:00:00'::time, 1, 5, 5, 5, 0, false),
+                  (CURRENT_DATE + INTERVAL '2 days' + '13:00:00'::time, CURRENT_DATE + INTERVAL '2 days' + '16:00:00'::time, 1, 5, 5, 5, 0, false),
+                  (CURRENT_DATE + INTERVAL '2 days' + '17:00:00'::time, CURRENT_DATE + INTERVAL '2 days' + '20:00:00'::time, 1, 5, 5, 5, 0, false)
+              ON CONFLICT DO NOTHING;
+
+              INSERT INTO couriers (name, phone, email, status, current_zone_id, is_active)
+              VALUES
+                  ('Иван Петров', '+7 (901) 123-45-67', 'ivan@example.com', 'available', 1, true),
+                  ('Мария Сидорова', '+7 (902) 234-56-78', 'maria@example.com', 'available', 1, true),
+                  ('Алексей Иванов', '+7 (903) 345-67-89', 'alexey@example.com', 'available', 1, true),
+                  ('Елена Смирнова', '+7 (904) 456-78-90', 'elena@example.com', 'available', 1, true),
+                  ('Дмитрий Козлов', '+7 (905) 567-89-01', 'dmitry@example.com', 'available', 1, true)
+              ON CONFLICT DO NOTHING;
+
+              -- Добавление расписания курьеров (все курьеры доступны на все слоты)
+              INSERT INTO courier_schedules (courier_id, slot_id, start_time, end_time, is_available, is_reserved, is_completed)
+              SELECT c.id, s.id, s.start_time, s.end_time, true, false, false
+              FROM couriers c
+              CROSS JOIN delivery_slots s
+              ON CONFLICT DO NOTHING;
+
+              -- Пример заказов доставки (несколько для тестирования)
+              INSERT INTO delivery (order_id, user_id, courier_id, status, scheduled_start_time, scheduled_end_time, delivery_address, recipient_name, recipient_phone)
+              SELECT
+                  d.order_id,
+                  d.user_id,
+                  d.courier_id,
+                  d.status,
+                  s.start_time as scheduled_start_time,
+                  s.end_time as scheduled_end_time,
+                  d.delivery_address,
+                  d.recipient_name,
+                  d.recipient_phone
+              FROM (
+                  VALUES
+                  (1, 1, 1, 'scheduled', 'ул. Ленина, 10, кв. 15', 'Иван Иванов', '+7 (900) 123-45-67', 1)
+              ) as d(order_id, user_id, courier_id, status, delivery_address, recipient_name, recipient_phone, slot_id)
+              JOIN delivery_slots s ON s.id = d.slot_id;
+              EOF
+          env:
+            - name: POSTGRES_HOST
+              value: "{{ .Values.database.host }}"
+            - name: POSTGRES_PORT
+              value: "{{ $.Values.global.postgresql.service.port }}"
+            - name: POSTGRES_USER
+              value: "{{ $.Values.global.postgresql.auth.username }}"
+            - name: POSTGRES_PASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+            - name: POSTGRES_DB
+              value: "{{ .Values.database.name }}"
+{{ end }} 

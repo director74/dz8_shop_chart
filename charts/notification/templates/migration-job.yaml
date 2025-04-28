@@ -1,0 +1,72 @@
+{{ if .Values.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: notification-migration-{{ randAlphaNum 5 | lower }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: notification-migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:17.2-alpine
+          command: ['sh', '-c', 'until pg_isready -h postgres -p {{ $.Values.global.postgresql.service.port }} -U {{ $.Values.global.postgresql.auth.username }} -t 5; do echo "Waiting for postgres..."; sleep 2; done;']
+          env:
+            - name: PGPASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+      containers:
+        - name: notification-migration
+          image: postgres:17.2-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -v ON_ERROR_STOP=1 <<EOF
+              -- Schema from 000001
+              CREATE TABLE IF NOT EXISTS notifications (
+                  id SERIAL PRIMARY KEY,
+                  user_id INTEGER NOT NULL,
+                  email VARCHAR(255) NOT NULL,
+                  subject VARCHAR(255) NOT NULL,
+                  message TEXT NOT NULL,
+                  status VARCHAR(20) NOT NULL,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP
+              );
+
+              CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+              CREATE INDEX IF NOT EXISTS idx_notifications_email ON notifications(email);
+              CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status);
+              EOF
+          env:
+            - name: POSTGRES_HOST
+              value: "postgres"
+            - name: POSTGRES_PORT
+              value: "{{ $.Values.global.postgresql.service.port }}"
+            - name: POSTGRES_USER
+              value: "{{ $.Values.global.postgresql.auth.username }}"
+            - name: POSTGRES_PASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+            - name: POSTGRES_DB
+              value: "{{ .Values.database.name }}"
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{ end }} 

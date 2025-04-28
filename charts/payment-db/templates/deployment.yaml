@@ -1,0 +1,78 @@
+{{ if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-db
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: payment-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-db
+  template:
+    metadata:
+      labels:
+        app: payment-db
+    spec:
+      containers:
+        - name: payment-db
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: postgresql
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              value: "{{ $.Values.global.postgresql.auth.username }}"
+            - name: POSTGRES_PASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+            - name: POSTGRES_DB
+              value: "{{ index .Values.databases 0 }}"
+          volumeMounts:
+            - name: payment-db-data
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - "{{ $.Values.global.postgresql.auth.username }}"
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - "{{ $.Values.global.postgresql.auth.username }}"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: payment-db-data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: payment-db-pvc
+          {{- else }}
+          emptyDir: { }
+          {{- end }}
+{{ end }}
+
+{{- if and .Values.enabled .Values.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: payment-db-pvc
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: payment-db
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+{{- end }} 

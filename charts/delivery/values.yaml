@@ -1,0 +1,13 @@
+enabled: true
+replicaCount: 1
+image:
+  repository: delivery-service
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8081
+database:
+  name: delivery
+rabbitmq:
+  vhost: / 

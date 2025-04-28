@@ -1,0 +1,59 @@
+apiVersion: v2
+name: shop
+description: Helm chart для развертывания интернет-магазина на микросервисах
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+dependencies:
+  - name: order
+    version: 0.1.0
+    repository: file://./charts/order
+    condition: order.enabled
+  - name: billing
+    version: 0.1.0
+    repository: file://./charts/billing
+    condition: billing.enabled
+  - name: notification
+    version: 0.1.0
+    repository: file://./charts/notification
+    condition: notification.enabled
+  - name: payment
+    version: 0.1.0
+    repository: file://./charts/payment
+    condition: payment.enabled
+  - name: warehouse
+    version: 0.1.0
+    repository: file://./charts/warehouse
+    condition: warehouse.enabled
+  - name: postgres
+    version: 0.1.0
+    repository: file://./charts/postgres
+    alias: postgres
+    condition: postgres.enabled
+  - name: payment-db
+    version: 0.1.0
+    repository: file://./charts/payment-db
+    alias: payment-db
+    condition: payment-db.enabled
+  - name: warehouse-db
+    version: 0.1.0
+    repository: file://./charts/warehouse-db
+    alias: warehouse-db
+    condition: warehouse-db.enabled
+  - name: rabbitmq
+    version: 0.1.0
+    repository: file://./charts/rabbitmq
+    condition: rabbitmq.enabled
+  - name: mailhog
+    version: 0.1.0
+    repository: file://./charts/mailhog
+    condition: mailhog.enabled
+  - name: delivery
+    version: 0.1.0
+    repository: file://./charts/delivery
+    condition: delivery.enabled
+  - name: delivery-db
+    version: 0.1.0
+    repository: file://./charts/delivery-db
+    alias: delivery-db
+    condition: delivery-db.enabled

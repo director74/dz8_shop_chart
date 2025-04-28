@@ -1,0 +1,1008 @@
+openapi: 3.0.3
+info:
+  title: Интернет-магазин в Kubernetes
+  description: |
+    API для взаимодействия с сервисами заказов, биллинга и уведомлений в Kubernetes.
+    
+    Система использует единый JWT токен для аутентификации пользователей во всех сервисах.
+    Токен, полученный в сервисе заказов, можно использовать для авторизации в сервисе биллинга и в сервисе уведомлений.
+    
+    Доступ ко всем API осуществляется через Kubernetes Ingress с доменом arch.homework.
+  version: 1.0.0
+  contact:
+    name: Команда разработки
+    email: dev@example.com
+
+servers:
+  - url: http://arch.homework
+    description: Kubernetes Ingress для всех сервисов
+
+tags:
+  - name: health
+    description: Проверка работоспособности сервисов
+  - name: auth
+    description: Авторизация и регистрация пользователей
+  - name: orders
+    description: Управление заказами
+  - name: billing
+    description: Операции с балансом и транзакциями
+  - name: users
+    description: Управление пользователями
+  - name: notifications
+    description: Управление уведомлениями
+
+paths:
+  # Проверка работоспособности
+  /health:
+    get:
+      tags:
+        - health
+      summary: Проверка работоспособности сервиса
+      description: Проверяет, что сервис работает и отвечает на запросы
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Сервис работает нормально
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+
+  # Авторизация и регистрация
+  /api/v1/auth/register:
+    post:
+      tags:
+        - auth
+      summary: Регистрация нового пользователя
+      description: Создает нового пользователя и его счет в биллинг-системе
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Пользователь успешно зарегистрирован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          description: Некорректные данные
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Пользователь с таким email уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/auth/login:
+    post:
+      tags:
+        - auth
+      summary: Авторизация пользователя
+      description: |
+        Авторизует пользователя и возвращает JWT токен.
+        Токен может быть использован для авторизации в сервисе заказов, биллинга и уведомлений.
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Успешная авторизация
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Некорректные данные
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Неверный логин или пароль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # Пользователи
+  /api/v1/users:
+    post:
+      tags:
+        - users
+      summary: Создание нового пользователя
+      description: Создает нового пользователя (публичный эндпоинт)
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: Пользователь успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateUserResponse'
+        '400':
+          description: Некорректные данные
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Пользователь с таким email уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+                
+  # Заказы
+  /api/v1/orders:
+    post:
+      tags:
+        - orders
+      summary: Создание нового заказа
+      description: Создает новый заказ и списывает средства со счета пользователя
+      operationId: createOrder
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Заказ успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateOrderResponse'
+        '400':
+          description: Некорректные данные заказа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '402':
+          description: Недостаточно средств
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/orders/{orderId}:
+    get:
+      tags:
+        - orders
+      summary: Получение информации о заказе
+      description: Возвращает детальную информацию о заказе по его ID
+      operationId: getOrderById
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          description: ID заказа
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Детальная информация о заказе
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetOrderResponse'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Нет доступа к этому заказу
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Заказ не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+                
+  /api/v1/users/{userId}/orders:
+    get:
+      tags:
+        - orders
+      summary: Получение списка заказов пользователя
+      description: Возвращает все заказы, принадлежащие указанному пользователю
+      operationId: getUserOrders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID пользователя
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Список заказов пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetOrdersResponse'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Нет доступа к заказам этого пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+                
+  # Биллинг
+  /api/v1/billing/account:
+    get:
+      tags:
+        - billing
+      summary: Получение информации о счете
+      description: Возвращает информацию о текущем балансе пользователя
+      operationId: getAccount
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Информация о счете
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetAccountResponse'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Счет не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /api/v1/billing/deposit:
+    post:
+      tags:
+        - billing
+      summary: Пополнение счета
+      description: Пополняет счет пользователя на указанную сумму
+      operationId: depositFunds
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepositRequest'
+      responses:
+        '200':
+          description: Средства успешно зачислены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DepositResponse'
+        '400':
+          description: Некорректная сумма пополнения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Счет не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /api/v1/billing/withdraw:
+    post:
+      tags:
+        - billing
+      summary: Списание средств
+      description: Списывает средства со счета пользователя
+      operationId: withdrawFunds
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawRequest'
+      responses:
+        '200':
+          description: Средства успешно списаны
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WithdrawResponse'
+        '400':
+          description: Некорректная сумма списания
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '402':
+          description: Недостаточно средств
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Счет не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+                
+  # Аккаунты
+  /api/v1/accounts:
+    post:
+      tags:
+        - billing
+      summary: Создание счета пользователя
+      description: Создает новый счет пользователя (используется сервисом заказов)
+      operationId: createAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountRequest'
+      responses:
+        '201':
+          description: Счет успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAccountResponse'
+        '400':
+          description: Некорректные данные
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Счет для этого пользователя уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /api/v1/accounts/{userId}:
+    get:
+      tags:
+        - billing
+      summary: Получение информации о счете по ID пользователя
+      description: Возвращает информацию о счете указанного пользователя
+      operationId: getAccountByUserId
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID пользователя
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Информация о счете
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetAccountResponse'
+        '404':
+          description: Счет не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+                
+  # Уведомления
+  /api/v1/notifications:
+    post:
+      tags:
+        - notifications
+      summary: Отправка уведомления
+      description: Отправляет уведомление пользователю
+      operationId: sendNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendNotificationRequest'
+      responses:
+        '201':
+          description: Уведомление успешно отправлено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendNotificationResponse'
+        '400':
+          description: Некорректные данные
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+                
+    get:
+      tags:
+        - notifications
+      summary: Получение списка всех уведомлений
+      description: Возвращает список всех уведомлений в системе
+      operationId: getAllNotifications
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Максимальное количество уведомлений
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          description: Смещение для пагинации
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Список уведомлений
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetNotificationsResponse'
+  
+  /api/v1/notifications/{notificationId}:
+    get:
+      tags:
+        - notifications
+      summary: Получение информации об уведомлении
+      description: Возвращает детальную информацию об уведомлении по его ID
+      operationId: getNotificationById
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          description: ID уведомления
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Детальная информация об уведомлении
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetNotificationResponse'
+        '404':
+          description: Уведомление не найдено
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  
+  /api/v1/users/{userId}/notifications:
+    get:
+      tags:
+        - notifications
+      summary: Получение списка уведомлений пользователя
+      description: Возвращает все уведомления, отправленные указанному пользователю
+      operationId: getUserNotifications
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID пользователя
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          description: Максимальное количество уведомлений
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          description: Смещение для пагинации
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Список уведомлений пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetNotificationsResponse'
+        '404':
+          description: Пользователь не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT токен, полученный при авторизации
+  
+  schemas:
+    # Запросы на регистрацию и авторизацию
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+        - name
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        password:
+          type: string
+          minLength: 8
+          example: "Password123!"
+        name:
+          type: string
+          example: "Иван Иванов"
+    
+    RegisterResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        name:
+          type: string
+          example: "Иван Иванов"
+        created_at:
+          type: string
+          format: date-time
+          example: "2023-06-01T12:00:00Z"
+    
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        password:
+          type: string
+          example: "Password123!"
+    
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        expires_at:
+          type: string
+          format: date-time
+          example: "2023-06-01T13:00:00Z"
+    
+    # Пользователи
+    CreateUserRequest:
+      type: object
+      required:
+        - email
+        - password
+        - name
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        password:
+          type: string
+          minLength: 8
+          example: "Password123!"
+        name:
+          type: string
+          example: "Иван Иванов"
+    
+    CreateUserResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        name:
+          type: string
+          example: "Иван Иванов"
+        created_at:
+          type: string
+          format: date-time
+          example: "2023-06-01T12:00:00Z"
+    
+    # Заказы
+    CreateOrderRequest:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        comment:
+          type: string
+          example: "Доставить до 18:00"
+    
+    OrderItem:
+      type: object
+      required:
+        - name
+        - price
+        - quantity
+      properties:
+        name:
+          type: string
+          example: "Товар 1"
+        price:
+          type: number
+          format: float
+          example: 100.50
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+    
+    CreateOrderResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        user_id:
+          type: integer
+          example: 1
+        status:
+          type: string
+          enum: [completed, failed]
+          example: "completed"
+        amount:
+          type: number
+          format: float
+          example: 201.00
+        created_at:
+          type: string
+          format: date-time
+          example: "2023-06-01T12:05:00Z"
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+    
+    GetOrderResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        user_id:
+          type: integer
+          example: 1
+        status:
+          type: string
+          enum: [completed, failed]
+          example: "completed"
+        amount:
+          type: number
+          format: float
+          example: 201.00
+        created_at:
+          type: string
+          format: date-time
+          example: "2023-06-01T12:05:00Z"
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        comment:
+          type: string
+          example: "Доставить до 18:00"
+    
+    GetOrdersResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 5
+        offset:
+          type: integer
+          example: 0
+        limit:
+          type: integer
+          example: 20
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/GetOrderResponse'
+    
+    # Аккаунты и биллинг
+    CreateAccountRequest:
+      type: object
+      required:
+        - user_id
+      properties:
+        user_id:
+          type: integer
+          example: 1
+    
+    CreateAccountResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        user_id:
+          type: integer
+          example: 1
+        balance:
+          type: number
+          format: float
+          example: 0.00
+        created_at:
+          type: string
+          format: date-time
+          example: "2023-06-01T12:00:00Z"
+    
+    GetAccountResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        user_id:
+          type: integer
+          example: 1
+        balance:
+          type: number
+          format: float
+          example: 500.00
+        created_at:
+          type: string
+          format: date-time
+          example: "2023-06-01T12:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2023-06-01T13:30:00Z"
+    
+    DepositRequest:
+      type: object
+      required:
+        - amount
+      properties:
+        amount:
+          type: number
+          format: float
+          minimum: 0.01
+          example: 100.00
+    
+    DepositResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        balance:
+          type: number
+          format: float
+          example: 600.00
+        transaction_id:
+          type: integer
+          example: 5
+    
+    WithdrawRequest:
+      type: object
+      required:
+        - amount
+      properties:
+        amount:
+          type: number
+          format: float
+          minimum: 0.01
+          example: 50.00
+        order_id:
+          type: integer
+          example: 123
+    
+    WithdrawResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        balance:
+          type: number
+          format: float
+          example: 550.00
+        transaction_id:
+          type: integer
+          example: 6
+    
+    # Уведомления
+    SendNotificationRequest:
+      type: object
+      required:
+        - user_id
+        - type
+        - subject
+        - body
+      properties:
+        user_id:
+          type: integer
+          example: 1
+        type:
+          type: string
+          enum: [email, sms, push]
+          example: "email"
+        subject:
+          type: string
+          example: "Новый заказ"
+        body:
+          type: string
+          example: "Ваш заказ №123 успешно оформлен"
+    
+    SendNotificationResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        user_id:
+          type: integer
+          example: 1
+        type:
+          type: string
+          enum: [email, sms, push]
+          example: "email"
+        subject:
+          type: string
+          example: "Новый заказ"
+        status:
+          type: string
+          enum: [sent, failed]
+          example: "sent"
+        created_at:
+          type: string
+          format: date-time
+          example: "2023-06-01T12:10:00Z"
+    
+    GetNotificationResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        user_id:
+          type: integer
+          example: 1
+        type:
+          type: string
+          enum: [email, sms, push]
+          example: "email"
+        subject:
+          type: string
+          example: "Новый заказ"
+        body:
+          type: string
+          example: "Ваш заказ №123 успешно оформлен"
+        status:
+          type: string
+          enum: [sent, failed]
+          example: "sent"
+        created_at:
+          type: string
+          format: date-time
+          example: "2023-06-01T12:10:00Z"
+    
+    GetNotificationsResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 10
+        offset:
+          type: integer
+          example: 0
+        limit:
+          type: integer
+          example: 20
+        notifications:
+          type: array
+          items:
+            $ref: '#/components/schemas/GetNotificationResponse'
+    
+    # Общие схемы
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Неверный запрос"
+        code:
+          type: string
+          example: "invalid_request"
+        details:
+          type: string
+          example: "Обязательное поле отсутствует" 

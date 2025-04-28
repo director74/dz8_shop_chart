@@ -1,0 +1,13 @@
+enabled: true
+replicaCount: 1
+image:
+  repository: warehouse-service
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8081
+database:
+  name: warehouse
+rabbitmq:
+  vhost: / 

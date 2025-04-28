@@ -1,0 +1,238 @@
+{{- if .Values.global.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-ingress
+  namespace: {{ .Values.global.namespace }}
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: {{ .Values.global.ingress.host }}
+      http:
+        paths:
+          # Notification service routes
+          - path: /api/v1/notifications
+            pathType: Prefix
+            backend:
+              service:
+                name: notification-service
+                port:
+                  number: {{ .Values.notification.service.port }}
+          - path: /api/v1/users/[0-9]+/notifications
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: notification-service
+                port:
+                  number: {{ .Values.notification.service.port }}
+                  
+          # Billing service routes
+          - path: /api/v1/billing/account
+            pathType: Prefix
+            backend:
+              service:
+                name: billing-service
+                port:
+                  number: {{ .Values.billing.service.port }}
+          - path: /api/v1/billing/deposit
+            pathType: Prefix
+            backend:
+              service:
+                name: billing-service
+                port:
+                  number: {{ .Values.billing.service.port }}
+          - path: /api/v1/billing/withdraw
+            pathType: Prefix
+            backend:
+              service:
+                name: billing-service
+                port:
+                  number: {{ .Values.billing.service.port }}
+          - path: /api/v1/billing
+            pathType: Prefix
+            backend:
+              service:
+                name: billing-service
+                port:
+                  number: {{ .Values.billing.service.port }}
+          - path: /api/v1/accounts
+            pathType: Prefix
+            backend:
+              service:
+                name: billing-service
+                port:
+                  number: {{ .Values.billing.service.port }}
+          
+          # Order service routes
+          - path: /api/v1/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: {{ .Values.order.service.port }}
+          - path: /api/v1/orders
+            pathType: Prefix
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: {{ .Values.order.service.port }}
+          - path: /api/v1/users/[0-9]+/orders
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: {{ .Values.order.service.port }}
+          - path: /api/v1/users
+            pathType: Prefix
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: {{ .Values.order.service.port }}
+                  
+          # Payment service routes
+          - path: /api/v1/payments/by-order
+            pathType: Prefix
+            backend:
+              service:
+                name: payment-service
+                port:
+                  number: {{ .Values.payment.service.port }}
+          - path: /api/v1/payments/by-customer
+            pathType: Prefix
+            backend:
+              service:
+                name: payment-service
+                port:
+                  number: {{ .Values.payment.service.port }}
+          - path: /api/v1/payments/process
+            pathType: Prefix
+            backend:
+              service:
+                name: payment-service
+                port:
+                  number: {{ .Values.payment.service.port }}
+          - path: /api/v1/payments
+            pathType: Prefix
+            backend:
+              service:
+                name: payment-service
+                port:
+                  number: {{ .Values.payment.service.port }}
+          
+          # Warehouse service routes
+          - path: /api/v1/warehouse/check
+            pathType: Prefix
+            backend:
+              service:
+                name: warehouse-service
+                port:
+                  number: {{ .Values.warehouse.service.port }}
+          - path: /api/v1/warehouse/order
+            pathType: Prefix
+            backend:
+              service:
+                name: warehouse-service
+                port:
+                  number: {{ .Values.warehouse.service.port }}
+          - path: /api/v1/warehouse/reserve
+            pathType: Prefix
+            backend:
+              service:
+                name: warehouse-service
+                port:
+                  number: {{ .Values.warehouse.service.port }}
+          - path: /api/v1/warehouse/release
+            pathType: Prefix
+            backend:
+              service:
+                name: warehouse-service
+                port:
+                  number: {{ .Values.warehouse.service.port }}
+          - path: /api/v1/warehouse/confirm
+            pathType: Prefix
+            backend:
+              service:
+                name: warehouse-service
+                port:
+                  number: {{ .Values.warehouse.service.port }}
+          - path: /api/v1/warehouse/product
+            pathType: Prefix
+            backend:
+              service:
+                name: warehouse-service
+                port:
+                  number: {{ .Values.warehouse.service.port }}
+          - path: /api/v1/warehouse
+            pathType: Prefix
+            backend:
+              service:
+                name: warehouse-service
+                port:
+                  number: {{ .Values.warehouse.service.port }}
+                  
+          # Delivery service routes
+          - path: /api/v1/delivery/check-availability
+            pathType: Prefix
+            backend:
+              service:
+                name: delivery-service
+                port:
+                  number: {{ .Values.delivery.service.port }}
+          - path: /api/v1/delivery/reserve
+            pathType: Prefix
+            backend:
+              service:
+                name: delivery-service
+                port:
+                  number: {{ .Values.delivery.service.port }}
+          - path: /api/v1/delivery/release
+            pathType: Prefix
+            backend:
+              service:
+                name: delivery-service
+                port:
+                  number: {{ .Values.delivery.service.port }}
+          - path: /api/v1/delivery/confirm
+            pathType: Prefix
+            backend:
+              service:
+                name: delivery-service
+                port:
+                  number: {{ .Values.delivery.service.port }}
+          - path: /api/v1/delivery/order
+            pathType: Prefix
+            backend:
+              service:
+                name: delivery-service
+                port:
+                  number: {{ .Values.delivery.service.port }}
+          - path: /api/v1/delivery/list
+            pathType: Prefix
+            backend:
+              service:
+                name: delivery-service
+                port:
+                  number: {{ .Values.delivery.service.port }}
+          - path: /api/v1/delivery
+            pathType: Prefix
+            backend:
+              service:
+                name: delivery-service
+                port:
+                  number: {{ .Values.delivery.service.port }}
+                  
+          # Health check routes
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: {{ .Values.order.service.port }}
+{{- end }} 

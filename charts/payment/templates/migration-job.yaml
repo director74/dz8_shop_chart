@@ -1,0 +1,72 @@
+{{ if .Values.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: payment-migration-{{ randAlphaNum 5 | lower }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: payment-migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-payment-db
+          image: postgres:17.2-alpine
+          command: ['sh', '-c', 'until pg_isready -h {{ .Values.database.host }} -p {{ $.Values.global.postgresql.service.port }} -U {{ $.Values.global.postgresql.auth.username }} -t 5; do echo "Waiting for payment-db postgres..."; sleep 2; done;']
+          env:
+            - name: PGPASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+      containers:
+        - name: payment-migration
+          image: postgres:17.2-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -d $POSTGRES_DB -v ON_ERROR_STOP=1 <<EOF
+              CREATE TABLE IF NOT EXISTS payments (
+                  id SERIAL PRIMARY KEY,
+                  order_id INTEGER NOT NULL,
+                  user_id INTEGER NOT NULL,
+                  amount DECIMAL(12, 2) NOT NULL,
+                  payment_method VARCHAR(50) NOT NULL,
+                  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                  transaction_id VARCHAR(255),
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP
+              );
+
+              CREATE TABLE IF NOT EXISTS payment_methods (
+                  id SERIAL PRIMARY KEY,
+                  user_id INTEGER NOT NULL,
+                  method_type VARCHAR(50) NOT NULL,
+                  details JSONB NOT NULL,
+                  is_default BOOLEAN NOT NULL DEFAULT false,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP
+              );
+
+              CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id);
+              CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
+              CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+              CREATE INDEX IF NOT EXISTS idx_payment_methods_user_id ON payment_methods(user_id);
+              EOF
+          env:
+            - name: POSTGRES_HOST
+              value: "{{ .Values.database.host }}"
+            - name: POSTGRES_PORT
+              value: "{{ $.Values.global.postgresql.service.port }}"
+            - name: POSTGRES_USER
+              value: "{{ $.Values.global.postgresql.auth.username }}"
+            - name: POSTGRES_PASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+            - name: POSTGRES_DB
+              value: "{{ .Values.database.name }}"
+{{ end }} 

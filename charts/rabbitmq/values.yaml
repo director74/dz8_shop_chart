@@ -1,0 +1,11 @@
+enabled: true
+image:
+  repository: bitnami/rabbitmq
+  tag: 3.12.10
+  pullPolicy: IfNotPresent
+persistence:
+  enabled: true
+  size: 1Gi
+service:
+  port: 5672
+  managementPort: 15672 

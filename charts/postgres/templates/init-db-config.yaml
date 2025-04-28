@@ -1,0 +1,55 @@
+{{ if .Values.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: postgres
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": hook-succeeded
+data:
+  init-databases.sh: |
+    #!/bin/bash
+    set -e
+
+    # Ждем, пока сервер Postgres не будет готов принимать соединения
+    echo "Waiting for PostgreSQL server to accept connections..."
+    until PGPASSWORD=${POSTGRES_PASSWORD} pg_isready -U "${POSTGRES_USER}" -d "postgres" -h 127.0.0.1 -p {{ $.Values.service.port }}; do
+      echo "Postgres is unavailable - sleeping"
+      sleep 1
+    done
+    echo "PostgreSQL server is ready! Proceeding with database creation..."
+
+    # Функция для выполнения SQL команды GRANT (с ON_ERROR_STOP)
+    run_sql_grant() {
+      PGPASSWORD=${POSTGRES_PASSWORD} psql -v ON_ERROR_STOP=1 --username "${POSTGRES_USER}" --dbname "postgres" -h 127.0.0.1 -p {{ $.Values.service.port }} -c "$1" > /dev/null
+    }
+
+    # Функция для выполнения CREATE DATABASE (без ON_ERROR_STOP, т.к. 'already exists' не ошибка)
+    run_sql_create() {
+      PGPASSWORD=${POSTGRES_PASSWORD} psql --username "${POSTGRES_USER}" --dbname "postgres" -h 127.0.0.1 -p {{ $.Values.service.port }} -c "$1" > /dev/null
+    }
+
+    echo "Checking/Creating databases from .Values.databases..."
+    {{- range .Values.databases }}
+      db_name="{{ . }}"
+      echo "Processing database: $db_name"
+      # Проверяем существование базы
+      if PGPASSWORD=${POSTGRES_PASSWORD} psql --username "${POSTGRES_USER}" --dbname "postgres" -h 127.0.0.1 -p {{ $.Values.service.port }} -tAc "SELECT 1 FROM pg_database WHERE datname = '$db_name'" | grep -q 1; then
+        echo "Database '$db_name' already exists."
+      else
+        echo "Database '$db_name' does not exist. Creating..."
+        run_sql_create "CREATE DATABASE $db_name;"
+        echo "Database '$db_name' created."
+      fi
+      # Выдаем права
+      echo "Granting privileges for database '$db_name'..."
+      run_sql_grant "GRANT ALL PRIVILEGES ON DATABASE $db_name TO ${POSTGRES_USER};"
+      echo "Finished processing database '$db_name'."
+    {{- end }}
+
+    echo "Database creation script finished."
+{{ end }} 

@@ -1,0 +1,111 @@
+@startuml
+title Взаимодействие микросервисов в Kubernetes кластере
+
+actor Пользователь
+participant "Ingress" as Ingress #LightGray
+participant "Сервис заказов\n(Order Service)" as OrderService #LightBlue
+participant "Сервис биллинга\n(Billing Service)" as BillingService #LightGreen
+participant "Сервис уведомлений\n(Notification Service)" as NotificationService #LightPink
+database "База данных заказов" as OrderDB #AliceBlue
+database "База данных биллинга" as BillingDB #PaleGreen
+database "База данных уведомлений" as NotificationDB #MistyRose
+queue "RabbitMQ" as RabbitMQ #LightYellow
+
+note across: Все сервисы используют единый ключ подписи JWT_SIGNING_KEY, JWT_TOKEN_ISSUER и JWT_TOKEN_AUDIENCES\nJWT токен, выданный одним сервисом, успешно проверяется другими сервисами\nДоступ ко всем API происходит через Ingress по домену arch.homework
+
+== Регистрация и авторизация пользователя ==
+Пользователь -> Ingress: POST http://arch.homework/api/v1/auth/register
+Ingress -> OrderService: Перенаправление запроса
+OrderService -> OrderDB: Сохранение данных пользователя
+OrderService -> BillingService: POST /api/v1/accounts (Create Account)
+BillingService -> BillingDB: Сохранение аккаунта с нулевым балансом
+BillingService --> OrderService: 201 Created (Account)
+OrderService --> Ingress: 201 Created (User)
+Ingress --> Пользователь: 201 Created (User)
+
+Пользователь -> Ingress: POST http://arch.homework/api/v1/auth/login
+Ingress -> OrderService: Перенаправление запроса
+OrderService -> OrderDB: Проверка учетных данных
+OrderService --> Ingress: 200 OK + JWT токен
+Ingress --> Пользователь: 200 OK + JWT токен
+
+== Создание заказа ==
+Пользователь -> Ingress: POST http://arch.homework/api/v1/orders + JWT токен
+Ingress -> OrderService: Перенаправление запроса
+OrderService -> OrderService: Проверка JWT и авторизация
+OrderService -> BillingService: POST /api/v1/billing/withdraw + JWT токен
+BillingService -> BillingService: Проверка JWT и авторизация
+BillingService -> BillingDB: Проверка баланса
+alt Достаточно средств
+    BillingService -> BillingDB: Списание средств
+    BillingService -> BillingDB: Запись транзакции со статусом "success"
+    BillingService --> OrderService: 200 OK {"success": true}
+    OrderService -> OrderDB: Сохранение заказа со статусом "completed"
+    OrderService -> RabbitMQ: Публикация события "order.notification" (success=true)
+    OrderService --> Ingress: 201 Created (Order)
+    Ingress --> Пользователь: 201 Created (Order)
+    RabbitMQ -> NotificationService: Получение события "order.notification"
+    NotificationService -> NotificationService: Формирование уведомления об успешном заказе
+    NotificationService -> NotificationDB: Сохранение уведомления
+    NotificationService --> Пользователь: Отправка уведомления об успешном заказе
+else Недостаточно средств
+    BillingService -> BillingDB: Запись транзакции со статусом "failed"
+    BillingService -> RabbitMQ: Публикация события "billing.insufficient_funds"
+    BillingService --> OrderService: 200 OK {"success": false}
+    OrderService -> OrderDB: Сохранение заказа со статусом "failed"
+    OrderService -> RabbitMQ: Публикация события "order.notification" (success=false)
+    OrderService --> Ingress: 201 Created (Order со статусом failed)
+    Ingress --> Пользователь: 201 Created (Order со статусом failed)
+    RabbitMQ -> NotificationService: Получение события "billing.insufficient_funds"
+    NotificationService -> NotificationService: Формирование уведомления о недостатке средств
+    NotificationService -> NotificationDB: Сохранение уведомления
+    NotificationService --> Пользователь: Отправка уведомления о недостатке средств
+    RabbitMQ -> NotificationService: Получение события "order.notification" (success=false)
+    NotificationService -> NotificationService: Формирование уведомления о неудачном заказе
+    NotificationService -> NotificationDB: Сохранение уведомления
+    NotificationService --> Пользователь: Отправка уведомления о неудачной попытке создания заказа
+end
+
+== Пополнение счета ==
+Пользователь -> Ingress: POST http://arch.homework/api/v1/billing/deposit + JWT токен
+Ingress -> BillingService: Перенаправление запроса
+BillingService -> BillingService: Проверка JWT и авторизация
+BillingService -> BillingDB: Пополнение баланса
+BillingService -> BillingDB: Запись транзакции со статусом "success"
+BillingService -> RabbitMQ: Публикация события "billing.deposit"
+BillingService --> Ingress: 200 OK {"success": true}
+Ingress --> Пользователь: 200 OK {"success": true}
+RabbitMQ -> NotificationService: Получение события "billing.deposit"
+NotificationService -> NotificationService: Формирование уведомления о пополнении
+NotificationService -> NotificationDB: Сохранение уведомления
+NotificationService --> Пользователь: Уведомление о пополнении счета
+
+== Получение информации о счете и заказах ==
+Пользователь -> Ingress: GET http://arch.homework/api/v1/billing/account + JWT токен
+Ingress -> BillingService: Перенаправление запроса
+BillingService -> BillingService: Проверка JWT и авторизация
+BillingService -> BillingDB: Запрос данных аккаунта
+BillingService --> Ingress: 200 OK (Account)
+Ingress --> Пользователь: 200 OK (Account)
+
+Пользователь -> Ingress: GET http://arch.homework/api/v1/users/{userId}/orders + JWT токен
+Ingress -> OrderService: Перенаправление запроса
+OrderService -> OrderService: Проверка JWT и авторизация (userId == текущий пользователь)
+OrderService -> OrderDB: Запрос заказов пользователя
+OrderService --> Ingress: 200 OK (Orders)
+Ingress --> Пользователь: 200 OK (Orders)
+
+Пользователь -> Ingress: GET http://arch.homework/api/v1/orders/{orderId} + JWT токен
+Ingress -> OrderService: Перенаправление запроса
+OrderService -> OrderService: Проверка JWT и авторизация
+OrderService -> OrderDB: Запрос заказа по ID
+OrderService --> Ingress: 200 OK (Order)
+Ingress --> Пользователь: 200 OK (Order)
+
+== Получение информации об уведомлениях ==
+Пользователь -> Ingress: GET http://arch.homework/api/v1/users/{userId}/notifications
+Ingress -> NotificationService: Перенаправление запроса
+NotificationService -> NotificationDB: Запрос уведомлений пользователя
+NotificationService --> Ingress: 200 OK (Notifications)
+Ingress --> Пользователь: 200 OK (Notifications)
+@enduml 

@@ -1,0 +1,38 @@
+{{- if .Values.global.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ui-ingress
+  namespace: {{ .Values.global.namespace }}
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: {{ .Values.global.ingress.host }}
+      http:
+        paths:
+          # MailHog UI route
+          {{- if .Values.mailhog.enabled }}
+          - path: /mailhog(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: mailhog
+                port:
+                  number: {{ .Values.mailhog.service.uiPort }}
+          {{- end }}
+          
+          # RabbitMQ Management UI route
+          {{- if .Values.rabbitmq.enabled }}
+          - path: /rabbitmq(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: rabbitmq
+                port:
+                  number: {{ .Values.rabbitmq.service.managementPort }}
+          {{- end }}
+{{- end }} 

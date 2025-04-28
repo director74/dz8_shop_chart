@@ -1,0 +1,12 @@
+enabled: true
+image:
+  repository: bitnami/postgresql
+  tag: 17.2.0
+  pullPolicy: IfNotPresent
+persistence:
+  enabled: true
+  size: 1Gi
+service:
+  port: 5432
+databases:
+  - warehouse

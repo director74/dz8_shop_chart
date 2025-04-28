@@ -1,0 +1,12 @@
+{
+  "id": "shop-k8s-env",
+  "name": "Shop K8s Environment",
+  "values": [
+    {
+      "key": "baseUrl",
+      "value": "http://arch.homework",
+      "enabled": true
+    }
+  ],
+  "_postman_variable_scope": "environment"
+}

@@ -1,0 +1,86 @@
+{{ if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-service
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: billing-service
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: billing-service
+  template:
+    metadata:
+      labels:
+        app: billing-service
+    spec:
+      initContainers:
+        - name: wait-for-billing
+          image: postgres:17.2-alpine
+          command: ['sh', '-c', 'until pg_isready -h postgres -p {{ $.Values.global.postgresql.service.port }} -U {{ $.Values.global.postgresql.auth.username }} -t 5; do echo "Waiting for postgres..."; sleep 2; done;']
+          env:
+            - name: PGPASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+        - name: wait-for-rabbitmq
+          image: busybox:1.28
+          command: ['sh', '-c', 'until nc -z rabbitmq {{ $.Values.global.rabbitmq.service.port }}; do echo "Waiting for rabbitmq..."; sleep 2; done;']
+      containers:
+        - name: billing-service
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: HTTP_PORT
+              value: "{{ .Values.service.port }}"
+            - name: POSTGRES_HOST
+              value: "postgres"
+            - name: POSTGRES_PORT
+              value: "{{ $.Values.global.postgresql.service.port }}"
+            - name: POSTGRES_USER
+              value: "{{ $.Values.global.postgresql.auth.username }}"
+            - name: POSTGRES_PASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+            - name: POSTGRES_DB
+              value: "{{ .Values.database.name }}"
+            - name: POSTGRES_SSLMODE
+              value: "disable"
+            - name: RABBITMQ_HOST
+              value: "rabbitmq"
+            - name: RABBITMQ_PORT
+              value: "{{ $.Values.global.rabbitmq.service.port }}"
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: username
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: password
+            - name: RABBITMQ_VHOST
+              value: "{{ .Values.rabbitmq.vhost }}"
+            - name: JWT_SIGNING_KEY
+              value: "{{ $.Values.global.jwt.signingKey }}"
+            - name: JWT_TOKEN_ISSUER
+              value: "{{ $.Values.global.jwt.tokenIssuer }}"
+            - name: JWT_TOKEN_AUDIENCES
+              value: "{{ $.Values.global.jwt.tokenAudiences }}"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+{{ end }} 

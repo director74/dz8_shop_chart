@@ -1,0 +1,18 @@
+{{ if .Values.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: warehouse-service
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: warehouse-service
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: warehouse-service
+{{ end }} 

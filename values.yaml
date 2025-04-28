@@ -1,0 +1,213 @@
+# Глобальные настройки
+global:
+  namespace: dz8
+  ingress:
+    enabled: true
+    host: arch.homework
+    className: ""
+  jwt:
+    signingKey: shared_microservices_secret_key
+    tokenIssuer: microservices-auth
+    tokenAudiences: microservices
+  postgresql:
+    auth:
+      username: postgres
+      password: postgres
+    service:
+      port: 5432
+  rabbitmq:
+    auth:
+      username: guest
+      password: guest
+    service:
+      port: 5672
+
+# Настройки сервисов
+order:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: lamoed/otusdz8_order-service
+    tag: 1.0.0
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8080
+  database:
+    host: postgres
+    name: orders
+  rabbitmq:
+    vhost: /
+  env:
+    BILLING_SERVICE_URL: http://billing-service:8081
+    NOTIFICATION_SERVICE_URL: http://notification-service:8082
+    PAYMENT_SERVICE_URL: http://payment-service:8083
+    WAREHOUSE_SERVICE_URL: http://warehouse-service:8084
+    DELIVERY_SERVICE_URL: http://delivery-service:8085
+
+billing:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: lamoed/otusdz8_billing-service
+    tag: 1.0.0
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8081
+  database:
+    host: postgres
+    name: billing
+  rabbitmq:
+    vhost: /
+
+notification:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: lamoed/otusdz8_notification-service
+    tag: 1.0.0
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8082
+  database:
+    host: postgres
+    name: notifications
+  rabbitmq:
+    vhost: /
+  smtp:
+    host: mailhog
+    port: 1025
+    fromEmail: notification@example.com
+
+payment:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: lamoed/otusdz8_payment-service
+    tag: 1.0.0
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8083
+  database:
+    host: payment-db-postgresql
+    name: payments
+  rabbitmq:
+    vhost: /
+
+warehouse:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: lamoed/otusdz8_warehouse-service
+    tag: 1.0.0
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8084
+  database:
+    host: warehouse-db-postgresql
+    name: warehouse
+  rabbitmq:
+    vhost: /
+
+delivery:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: lamoed/otusdz8_delivery-service
+    tag: 1.0.0
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8085
+  database:
+    host: delivery-db-postgresql
+    name: delivery
+  rabbitmq:
+    vhost: /
+
+# Настройки инфраструктуры
+postgres:
+  enabled: true
+  image:
+    repository: bitnami/postgresql
+    tag: "17.2.0"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: false
+    size: 1Gi
+  service:
+    port: 5432
+  databases:
+    - orders
+    - billing
+    - notifications
+
+payment-db:
+  enabled: true
+  image:
+    repository: bitnami/postgresql
+    tag: "17.2.0"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: false
+    size: 1Gi
+  service:
+    port: 5432
+  databases:
+    - payments
+
+warehouse-db:
+  enabled: true
+  image:
+    repository: bitnami/postgresql
+    tag: "17.2.0"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: false
+    size: 1Gi
+  service:
+    port: 5432
+  databases:
+    - warehouse
+
+delivery-db:
+  enabled: true
+  image:
+    repository: bitnami/postgresql
+    tag: "17.2.0"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: false
+    size: 1Gi
+  service:
+    port: 5432
+  databases:
+    - delivery
+
+rabbitmq:
+  enabled: true
+  image:
+    repository: rabbitmq
+    tag: 3.12-management
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: false
+    size: 1Gi
+  service:
+    port: 5672
+    managementPort: 15672
+
+mailhog:
+  enabled: true
+  image:
+    repository: mailhog/mailhog
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 1025
+    uiPort: 8025 

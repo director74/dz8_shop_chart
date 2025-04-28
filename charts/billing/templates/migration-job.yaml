@@ -1,0 +1,83 @@
+{{ if .Values.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: billing-migration-{{ randAlphaNum 5 | lower }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: billing-migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-billing-db
+          image: postgres:17.2-alpine
+          command: ['sh', '-c', 'until pg_isready -h postgres -p {{ $.Values.global.postgresql.service.port }} -U {{ $.Values.global.postgresql.auth.username }} -t 5; do echo "Waiting for billing postgres..."; sleep 2; done;']
+          env:
+            - name: PGPASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+      containers:
+        - name: billing-migration
+          image: postgres:17.2-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -d $POSTGRES_DB -v ON_ERROR_STOP=1 <<EOF
+              -- Schema from 000001
+              CREATE TABLE IF NOT EXISTS accounts (
+                  id SERIAL PRIMARY KEY,
+                  user_id INTEGER NOT NULL UNIQUE,
+                  balance DECIMAL(12, 2) NOT NULL DEFAULT 0,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP
+              );
+
+              CREATE TABLE IF NOT EXISTS transactions (
+                  id SERIAL PRIMARY KEY,
+                  account_id INTEGER NOT NULL,
+                  amount DECIMAL(12, 2) NOT NULL,
+                  type VARCHAR(20) NOT NULL,
+                  status VARCHAR(20) NOT NULL,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP,
+                  CONSTRAINT fk_transactions_account FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+              );
+
+              CREATE INDEX IF NOT EXISTS idx_accounts_user_id ON accounts(user_id);
+              CREATE INDEX IF NOT EXISTS idx_transactions_account_id ON transactions(account_id);
+              CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(type);
+              CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
+
+              -- Data from 000002
+              INSERT INTO accounts (user_id, balance)
+              VALUES (1, 5001.00)
+              ON CONFLICT DO NOTHING;
+
+              INSERT INTO transactions (account_id, amount, type, status)
+              VALUES (1, 10000.00, 'deposit', 'completed')
+              ON CONFLICT DO NOTHING;
+
+              INSERT INTO transactions (account_id, amount, type, status)
+              VALUES (1, -4999.00, 'payment', 'completed')
+              ON CONFLICT DO NOTHING;
+              EOF
+          env:
+            - name: POSTGRES_HOST
+              value: "postgres"
+            - name: POSTGRES_PORT
+              value: "{{ $.Values.global.postgresql.service.port }}"
+            - name: POSTGRES_USER
+              value: "{{ $.Values.global.postgresql.auth.username }}"
+            - name: POSTGRES_PASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+            - name: POSTGRES_DB
+              value: "{{ .Values.database.name }}"
+{{ end }} 

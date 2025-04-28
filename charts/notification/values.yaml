@@ -1,0 +1,17 @@
+enabled: true
+replicaCount: 1
+image:
+  repository: notification-service
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8082
+database:
+  name: notifications
+rabbitmq:
+  vhost: /
+smtp:
+  host: mailhog
+  port: 1025
+  fromEmail: notification@example.com 

@@ -1,0 +1,196 @@
+{{ if .Values.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: warehouse-migration-{{ randAlphaNum 5 | lower }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: warehouse-migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-warehouse-db
+          image: postgres:17.2-alpine
+          command: ['sh', '-c', 'until pg_isready -h {{ .Values.database.host }} -p {{ $.Values.global.postgresql.service.port }} -U {{ $.Values.global.postgresql.auth.username }} -t 5; do echo "Waiting for warehouse-db postgres..."; sleep 5; done; echo "Warehouse DB is ready!"; sleep 5']
+          env:
+            - name: PGPASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+      containers:
+        - name: warehouse-migration
+          image: postgres:17.2-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Устанавливаем переменные окружения для всех команд psql
+              export PGPASSWORD=$POSTGRES_PASSWORD
+              export PGHOST=$POSTGRES_HOST
+              export PGPORT=$POSTGRES_PORT
+              export PGUSER=$POSTGRES_USER
+              export PGDATABASE=$POSTGRES_DB
+              
+              echo "Starting warehouse database migration..."
+
+              # Создаем таблицу products
+              echo "Creating products table..."
+              psql -v ON_ERROR_STOP=1 -c "
+              CREATE TABLE IF NOT EXISTS products (
+                  id SERIAL PRIMARY KEY,
+                  name VARCHAR(255) NOT NULL,
+                  description TEXT,
+                  price DECIMAL(12, 2) NOT NULL,
+                  sku VARCHAR(50) NOT NULL UNIQUE,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP
+              );"
+              
+              # Создаем таблицу warehouse_items
+              echo "Creating warehouse_items table..."
+              psql -v ON_ERROR_STOP=1 -c "
+              CREATE TABLE IF NOT EXISTS warehouse_items (
+                  id SERIAL PRIMARY KEY,
+                  product_id INTEGER NOT NULL,
+                  quantity BIGINT NOT NULL DEFAULT 0,
+                  reserved_quantity BIGINT NOT NULL DEFAULT 0,
+                  available BIGINT DEFAULT 0,
+                  location VARCHAR(100),
+                  name VARCHAR(255) NOT NULL,
+                  sku VARCHAR(50) NOT NULL,
+                  price DECIMAL(12, 2) NOT NULL,
+                  status VARCHAR(20),
+                  last_order_id INTEGER,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP,
+                  CONSTRAINT fk_warehouse_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+              );"
+              
+              # Проверяем наличие колонки expires_at и создаем её если отсутствует
+              echo "Checking warehouse_reservations table..."
+              TABLE_EXISTS=$(psql -t -c "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'warehouse_reservations');" | tr -d ' ')
+              
+              if [ "$TABLE_EXISTS" = "t" ]; then
+                echo "Checking if expires_at column exists..."
+                COLUMN_EXISTS=$(psql -t -c "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_name = 'warehouse_reservations' AND column_name = 'expires_at');" | tr -d ' ')
+                
+                if [ "$COLUMN_EXISTS" = "f" ]; then
+                  echo "Adding expires_at column to warehouse_reservations..."
+                  psql -v ON_ERROR_STOP=1 -c "
+                  ALTER TABLE warehouse_reservations ADD COLUMN expires_at TIMESTAMP DEFAULT NULL;
+                  "
+                fi
+              fi
+              
+              # Создаем таблицу warehouse_reservations
+              echo "Creating warehouse_reservations table..."
+              psql -v ON_ERROR_STOP=1 -c "
+              CREATE TABLE IF NOT EXISTS warehouse_reservations (
+                  id SERIAL PRIMARY KEY,
+                  order_id INTEGER NOT NULL,
+                  product_id INTEGER NOT NULL,
+                  warehouse_item_id INTEGER NOT NULL,
+                  quantity INTEGER NOT NULL,
+                  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                  expires_at TIMESTAMP DEFAULT NULL,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP,
+                  CONSTRAINT fk_reservation_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+                  CONSTRAINT fk_reservation_warehouse_item FOREIGN KEY (warehouse_item_id) REFERENCES warehouse_items(id) ON DELETE CASCADE
+              );"
+              
+              # Создаем индексы
+              echo "Creating indexes..."
+              psql -v ON_ERROR_STOP=1 -c "
+              CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);
+              CREATE INDEX IF NOT EXISTS idx_warehouse_items_product_id ON warehouse_items(product_id);
+              CREATE INDEX IF NOT EXISTS idx_warehouse_items_sku ON warehouse_items(sku);
+              CREATE INDEX IF NOT EXISTS idx_warehouse_items_available ON warehouse_items(available);
+              CREATE INDEX IF NOT EXISTS idx_warehouse_reservations_order_id ON warehouse_reservations(order_id);
+              CREATE INDEX IF NOT EXISTS idx_warehouse_reservations_product_id ON warehouse_reservations(product_id);
+              CREATE INDEX IF NOT EXISTS idx_warehouse_reservations_status ON warehouse_reservations(status);
+              CREATE INDEX IF NOT EXISTS idx_warehouse_reservations_warehouse_item_id ON warehouse_reservations(warehouse_item_id);"
+              
+              # Создаем триггер для автоматического обновления поля available
+              echo "Creating trigger for available calculation..."
+              psql -c "
+              -- Создаем функцию для вычисления available
+              CREATE OR REPLACE FUNCTION update_warehouse_available() RETURNS TRIGGER AS \$\$
+              BEGIN
+                NEW.available := NEW.quantity - NEW.reserved_quantity;
+                RETURN NEW;
+              END;
+              \$\$ LANGUAGE plpgsql;
+
+              -- Удаляем триггер если существует
+              DROP TRIGGER IF EXISTS update_warehouse_available_trigger ON warehouse_items;
+
+              -- Создаем триггер
+              CREATE TRIGGER update_warehouse_available_trigger
+              BEFORE INSERT OR UPDATE ON warehouse_items
+              FOR EACH ROW
+              EXECUTE FUNCTION update_warehouse_available();"
+              
+              # Обновляем все строки, чтобы активировать триггер
+              echo "Updating available values..."
+              psql -v ON_ERROR_STOP=1 -c "UPDATE warehouse_items SET quantity = quantity;"
+              
+              # Вставка тестовых данных
+              echo "Inserting products data..."
+              psql -v ON_ERROR_STOP=1 -c "
+              INSERT INTO products (name, description, price, sku)
+              VALUES
+                  ('Смартфон XPhone 12', 'Мощный современный смартфон с 6.5\" экраном и 128 ГБ памяти', 49999.99, 'PHONE-001'),
+                  ('Ноутбук PowerBook', 'Легкий и мощный ноутбук для работы и развлечений', 89999.99, 'LAPTOP-001'),
+                  ('Умные часы SmartTime', 'Фитнес-трекер и умные часы в одном устройстве', 12999.99, 'WATCH-001'),
+                  ('Беспроводные наушники SoundPro', 'Наушники с шумоподавлением и 10 часами работы', 8999.99, 'AUDIO-001'),
+                  ('Внешний аккумулятор PowerBank', 'Емкость 20000 мАч, быстрая зарядка', 3999.99, 'POWER-001'),
+                  ('Умная колонка HomeSpeaker', 'Умная колонка с голосовым помощником', 7999.99, 'SPEAKER-001'),
+                  ('Игровая консоль GameStation', 'Игровая консоль нового поколения', 39999.99, 'GAME-001'),
+                  ('Фотоаппарат ClickPro', 'Беззеркальная камера с качественным объективом', 69999.99, 'CAMERA-001'),
+                  ('Планшет TabletPlus', '10.1\" планшет для работы и развлечений', 29999.99, 'TABLET-001'),
+                  ('Роутер NetSpeed', 'Высокоскоростной роутер для дома и офиса', 4999.99, 'NETWORK-001')
+              ON CONFLICT DO NOTHING;"
+              
+              echo "Inserting warehouse items data..."
+              psql -v ON_ERROR_STOP=1 -c "
+              INSERT INTO warehouse_items (product_id, quantity, reserved_quantity, location, name, sku, price, status)
+              VALUES
+                  (1, 100, 0, 'Секция A, полка 1', 'Смартфон XPhone 12 на складе', 'STOCK-PHONE-001', 49999.99, 'available'),
+                  (2, 50, 0, 'Секция A, полка 2', 'Ноутбук PowerBook на складе', 'STOCK-LAPTOP-001', 89999.99, 'available'),
+                  (3, 200, 0, 'Секция B, полка 1', 'Умные часы SmartTime на складе', 'STOCK-WATCH-001', 12999.99, 'available'),
+                  (4, 150, 0, 'Секция B, полка 2', 'Беспроводные наушники SoundPro на складе', 'STOCK-AUDIO-001', 8999.99, 'available'),
+                  (5, 300, 0, 'Секция C, полка 1', 'Внешний аккумулятор PowerBank на складе', 'STOCK-POWER-001', 3999.99, 'available'),
+                  (6, 75, 0, 'Секция C, полка 2', 'Умная колонка HomeSpeaker на складе', 'STOCK-SPEAKER-001', 7999.99, 'available'),
+                  (7, 30, 0, 'Секция D, полка 1', 'Игровая консоль GameStation на складе', 'STOCK-GAME-001', 39999.99, 'available'),
+                  (8, 25, 0, 'Секция D, полка 2', 'Фотоаппарат ClickPro на складе', 'STOCK-CAMERA-001', 69999.99, 'available'),
+                  (9, 80, 0, 'Секция E, полка 1', 'Планшет TabletPlus на складе', 'STOCK-TABLET-001', 29999.99, 'available'),
+                  (10, 120, 0, 'Секция E, полка 2', 'Роутер NetSpeed на складе', 'STOCK-NETWORK-001', 4999.99, 'available')
+              ON CONFLICT DO NOTHING;"
+              
+              echo "Inserting test reservation..."
+              psql -v ON_ERROR_STOP=1 -c "
+              INSERT INTO warehouse_reservations (order_id, product_id, warehouse_item_id, quantity, status, expires_at)
+              VALUES (1, 1, 1, 1, 'reserved', NOW() + INTERVAL '1 day')
+              ON CONFLICT DO NOTHING;"
+              
+              echo "Warehouse migration completed successfully!"
+          env:
+            - name: POSTGRES_HOST
+              value: "{{ .Values.database.host }}"
+            - name: POSTGRES_PORT
+              value: "{{ $.Values.global.postgresql.service.port }}"
+            - name: POSTGRES_USER
+              value: "{{ $.Values.global.postgresql.auth.username }}"
+            - name: POSTGRES_PASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+            - name: POSTGRES_DB
+              value: "{{ .Values.database.name }}"
+{{ end }} 

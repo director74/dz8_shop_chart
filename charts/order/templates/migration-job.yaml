@@ -1,0 +1,100 @@
+{{ if .Values.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: order-migration-{{ randAlphaNum 5 | lower }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: order-migration
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-postgres
+          image: postgres:17.2-alpine
+          command: ['sh', '-c', 'until pg_isready -h {{ .Values.database.host }} -p {{ $.Values.global.postgresql.service.port }} -U {{ $.Values.global.postgresql.auth.username }} -t 5; do echo "Waiting for postgres..."; sleep 2; done;']
+          env:
+            - name: PGPASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+      containers:
+        - name: order-migration
+          image: postgres:17.2-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -v ON_ERROR_STOP=1 <<EOF
+              -- Schema from 000001
+              CREATE TABLE IF NOT EXISTS users (
+                  id SERIAL PRIMARY KEY,
+                  username VARCHAR(100) NOT NULL,
+                  email VARCHAR(255) NOT NULL UNIQUE,
+                  password VARCHAR(255) NOT NULL,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP
+              );
+
+              CREATE TABLE IF NOT EXISTS orders (
+                  id SERIAL PRIMARY KEY,
+                  user_id INTEGER NOT NULL,
+                  amount DECIMAL(12, 2) NOT NULL,
+                  status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  deleted_at TIMESTAMP,
+                  CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+              );
+
+              CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+              CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
+              CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+
+              -- Таблица для хранения состояния саг
+              CREATE TABLE IF NOT EXISTS saga_states (
+                  saga_id VARCHAR(255) PRIMARY KEY,
+                  order_id INTEGER NOT NULL,
+                  status VARCHAR(50) NOT NULL DEFAULT 'running', -- running, compensating, completed, failed, compensated
+                  compensated_steps JSONB NOT NULL DEFAULT '{}'::jsonb,
+                  total_to_compensate INTEGER NOT NULL DEFAULT 0,
+                  last_step VARCHAR(100),
+                  error_message TEXT,
+                  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                  CONSTRAINT fk_saga_states_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+              );
+
+              CREATE INDEX IF NOT EXISTS idx_saga_states_order_id ON saga_states(order_id);
+              CREATE INDEX IF NOT EXISTS idx_saga_states_status ON saga_states(status);
+
+              -- Data from 000002
+              INSERT INTO users (username, email, password)
+              VALUES 
+                  ('testuser', 'test@example.com', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy')
+              ON CONFLICT DO NOTHING;
+
+              INSERT INTO orders (user_id, amount, status)
+              VALUES (1, 4999.00, 'pending')
+              ON CONFLICT DO NOTHING;
+
+              -- Сбрасываем последовательности ID, чтобы новые записи создавались после существующих
+              SELECT setval('users_id_seq', COALESCE((SELECT MAX(id) FROM users), 0) + 1, false);
+              SELECT setval('orders_id_seq', COALESCE((SELECT MAX(id) FROM orders), 0) + 1, false);
+              EOF
+          env:
+            - name: POSTGRES_HOST
+              value: "{{ .Values.database.host }}"
+            - name: POSTGRES_PORT
+              value: "{{ $.Values.global.postgresql.service.port }}"
+            - name: POSTGRES_USER
+              value: "{{ $.Values.global.postgresql.auth.username }}"
+            - name: POSTGRES_PASSWORD
+              value: "{{ $.Values.global.postgresql.auth.password }}"
+            - name: POSTGRES_DB
+              value: "{{ .Values.database.name }}"
+{{ end }} 
